@@ -1,0 +1,271 @@
+basePath: /api/v1
+definitions:
+  handler.createOrderRequest:
+    properties:
+      campaign_id:
+        example: 00000000-0000-0000-0000-000000000002
+        type: string
+      idempotency_key:
+        example: unique-uuid-from-client
+        type: string
+      qty:
+        example: 1
+        minimum: 1
+        type: integer
+      user_id:
+        example: aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa
+        type: string
+    required:
+    - campaign_id
+    - qty
+    - user_id
+    type: object
+  handler.createOrderResponse:
+    properties:
+      created_at:
+        example: "2024-03-29T10:00:00Z"
+        type: string
+      order_id:
+        example: d6aa7191-1ffc-4be3-a224-bf8bf6be5ebb
+        type: string
+      qty:
+        example: 1
+        type: integer
+      status:
+        example: 1
+        type: integer
+      subtotal:
+        example: 29900
+        type: number
+      unit_price:
+        example: 29900
+        type: number
+    type: object
+  handler.errorResponse:
+    properties:
+      error_code:
+        example: OUT_OF_STOCK
+        type: string
+      message:
+        example: Sorry, the campaign items are sold out.
+        type: string
+    type: object
+  model.CampaignStatus:
+    enum:
+    - 0
+    - 1
+    - 2
+    - 3
+    format: int32
+    type: integer
+    x-enum-varnames:
+    - CampaignDraft
+    - CampaignActive
+    - CampaignEnded
+    - CampaignCancelled
+  model.CampaignWithProduct:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      deleted_at:
+        type: string
+      deleted_by:
+        type: string
+      end_at:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      orig_price:
+        type: number
+      product_id:
+        type: string
+      product_name:
+        type: string
+      remaining_qty:
+        type: integer
+      sale_price:
+        type: number
+      start_at:
+        type: string
+      status:
+        $ref: '#/definitions/model.CampaignStatus'
+      total_qty:
+        type: integer
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+    type: object
+  model.Product:
+    properties:
+      created_at:
+        type: string
+      created_by:
+        type: string
+      deleted_at:
+        type: string
+      deleted_by:
+        type: string
+      description:
+        type: string
+      id:
+        type: string
+      name:
+        type: string
+      price:
+        type: number
+      status:
+        $ref: '#/definitions/model.ProductStatus'
+      updated_at:
+        type: string
+      updated_by:
+        type: string
+    type: object
+  model.ProductStatus:
+    enum:
+    - 0
+    - 1
+    format: int32
+    type: integer
+    x-enum-varnames:
+    - ProductActive
+    - ProductInactive
+host: localhost:8080
+info:
+  contact:
+    name: changken
+  description: |-
+    High-concurrency flash sale inventory system. Core design: atomic DB UPDATE prevents overselling under concurrent load.
+
+    ## Concurrency Strategy
+    POST /orders uses a single atomic SQL UPDATE with WHERE guard:
+    `UPDATE campaign SET remaining_qty = remaining_qty - $qty WHERE ... AND remaining_qty >= $qty`
+    RowsAffected == 0 signals sold-out. No SELECT FOR UPDATE needed.
+  license:
+    name: MIT
+  title: Flash Sale API
+  version: "1.0"
+paths:
+  /campaigns:
+    get:
+      description: Returns all flash sale campaigns with remaining inventory
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            items:
+              $ref: '#/definitions/model.CampaignWithProduct'
+            type: array
+        "500":
+          description: Internal Server Error
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: List all campaigns
+      tags:
+      - campaigns
+  /campaigns/{id}:
+    get:
+      description: Returns a single campaign with product info and remaining inventory
+      parameters:
+      - description: Campaign UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.CampaignWithProduct'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get campaign by ID
+      tags:
+      - campaigns
+  /orders:
+    post:
+      consumes:
+      - application/json
+      description: Atomically deducts inventory and creates an order. Core concurrency
+        endpoint — protected by DB atomic UPDATE with WHERE guard.
+      parameters:
+      - description: Order request
+        in: body
+        name: request
+        required: true
+        schema:
+          $ref: '#/definitions/handler.createOrderRequest'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/handler.createOrderResponse'
+        "400":
+          description: Invalid request parameters
+          schema:
+            $ref: '#/definitions/handler.errorResponse'
+        "409":
+          description: Out of stock or campaign not active
+          schema:
+            $ref: '#/definitions/handler.errorResponse'
+        "500":
+          description: Internal server error
+          schema:
+            $ref: '#/definitions/handler.errorResponse'
+      summary: Place a flash sale order
+      tags:
+      - orders
+  /products/{id}:
+    get:
+      description: Returns a single active product
+      parameters:
+      - description: Product UUID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/model.Product'
+        "400":
+          description: Bad Request
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+        "404":
+          description: Not Found
+          schema:
+            additionalProperties:
+              type: string
+            type: object
+      summary: Get product by ID
+      tags:
+      - products
+swagger: "2.0"
