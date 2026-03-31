@@ -1,4 +1,5 @@
 using FlashSales.Api.Dtos;
+using FlashSales.Api.Filters;
 using FlashSales.Api.Infrastructure;
 using FlashSales.Api.Middleware;
 using FlashSales.Api.Services;
@@ -15,43 +16,50 @@ public class OrdersController : ControllerBase
     public OrdersController(IOrderService svc) => _svc = svc;
 
     [HttpPost]
+    [ServiceFilter(typeof(RateLimitFilter))]
     public async Task<IActionResult> Create([FromBody] CreateOrderRequest req, CancellationToken ct)
     {
-        using var timer = MetricsRegistry.OrderDuration.NewTimer();
-
-        if (!Guid.TryParse(req.CampaignId, out var campaignId))
-            return BadRequest(new { error = "invalid campaign_id" });
-
-        if (!Guid.TryParse(req.UserId, out var userId))
-            return BadRequest(new { error = "invalid user_id" });
-
+        var stopwatch = System.Diagnostics.Stopwatch.StartNew();
         try
         {
-            var order = await _svc.CreateOrderAsync(campaignId, userId, req.Qty, req.IdempotencyKey, ct);
-            MetricsRegistry.OrderRequestsTotal.WithLabels("success").Inc();
-            return CreatedAtAction(nameof(Create), new { id = order.Id }, new CreateOrderResponse
+            if (!Guid.TryParse(req.CampaignId, out var campaignId))
+                return BadRequest(new { error = "invalid campaign_id" });
+
+            if (!Guid.TryParse(req.UserId, out var userId))
+                return BadRequest(new { error = "invalid user_id" });
+
+            try
             {
-                OrderId = order.Id.ToString(),
-                Status = (short)order.Status,
-                UnitPrice = order.UnitPrice,
-                Qty = order.Qty,
-                Subtotal = order.Subtotal,
-                CreatedAt = order.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss.ffffff zzz")
-            });
-        }
-        catch (OutOfStockException)
-        {
-            MetricsRegistry.OrderRequestsTotal.WithLabels("out_of_stock").Inc();
-            return Conflict(new ErrorResponse
+                var order = await _svc.CreateOrderAsync(campaignId, userId, req.Qty, req.IdempotencyKey, ct);
+                MetricsRegistry.OrderResultsTotal.WithLabels("success").Inc();
+                return CreatedAtAction(nameof(Create), new { id = order.Id }, new CreateOrderResponse
+                {
+                    OrderId   = order.Id.ToString(),
+                    Status    = (short)order.Status,
+                    UnitPrice = order.UnitPrice,
+                    Qty       = order.Qty,
+                    Subtotal  = order.Subtotal,
+                    CreatedAt = order.CreatedAt.ToString("yyyy-MM-dd HH:mm:ss.ffffff zzz")
+                });
+            }
+            catch (OutOfStockException)
             {
-                ErrorCode = "OUT_OF_STOCK",
-                Message = "Sorry, the campaign items are sold out or the campaign is not active."
-            });
+                MetricsRegistry.OrderResultsTotal.WithLabels("out_of_stock").Inc();
+                return Conflict(new ErrorResponse
+                {
+                    ErrorCode = "OUT_OF_STOCK",
+                    Message   = "Sorry, the campaign items are sold out or the campaign is not active."
+                });
+            }
+            catch (Exception)
+            {
+                MetricsRegistry.OrderResultsTotal.WithLabels("error").Inc();
+                return StatusCode(500, new ErrorResponse { Message = "internal server error" });
+            }
         }
-        catch (Exception)
+        finally
         {
-            MetricsRegistry.OrderRequestsTotal.WithLabels("error").Inc();
-            return StatusCode(500, new ErrorResponse { Message = "internal server error" });
+            MetricsRegistry.OrderDuration.Observe(stopwatch.Elapsed.TotalSeconds);
         }
     }
 }

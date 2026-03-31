@@ -4,11 +4,11 @@ namespace FlashSales.Api.Middleware;
 
 public static class MetricsRegistry
 {
-    // HTTP 請求計數
-    public static readonly Counter OrderRequestsTotal = Metrics.CreateCounter(
-        "flashsales_order_requests_total",
-        "Total number of order requests",
-        new CounterConfiguration { LabelNames = new[] { "status" } }
+    // Order result counter (labels: success / out_of_stock / error / rate_limited)
+    public static readonly Counter OrderResultsTotal = Metrics.CreateCounter(
+        "flashsales_order_results_total",
+        "Total number of order requests by result",
+        new CounterConfiguration { LabelNames = new[] { "result" } }
     );
 
     // 訂單處理延遲

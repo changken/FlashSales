@@ -142,14 +142,34 @@ dotnet/
 │   ├── Controllers/
 │   │   ├── ProductsController.cs
 │   │   ├── CampaignsController.cs
-│   │   └── OrdersController.cs
+│   │   └── OrdersController.cs       # [ServiceFilter(RateLimitFilter)] 套在 Create
+│   ├── Filters/
+│   │   └── RateLimitFilter.cs        # ★ action filter：per-user 10/min、per-campaign 100/sec
 │   └── Infrastructure/
 │       ├── DbConnectionFactory.cs
 │       ├── OutOfStockException.cs
 │       └── ServiceCollectionExtensions.cs
 └── tests/FlashSales.Tests/
-    └── OrderConcurrencyTests.cs      # 500 Task 併發測試
+    ├── OrderConcurrencyTests.cs      # 500 Task 併發測試（需要真實 DB）
+    └── RateLimitFilterTests.cs       # 限流整合測試（WebApplicationFactory + NSubstitute，無外部依賴）
 ```
+
+## 限流（Rate Limiting）
+
+限流邏輯實作在 `Filters/RateLimitFilter.cs`，以 **action filter** 的形式只套用在 `POST /api/v1/orders`。
+
+| 維度 | 上限 | 視窗 | Redis key |
+|------|------|------|-----------|
+| per-user | 10 次 | 1 分鐘 | `ratelimit:user:{userId}` |
+| per-campaign | 100 次 | 1 秒 | `ratelimit:campaign:{campaignId}:{unix_sec}` |
+
+超過限制回傳 `429 Too Many Requests`，並附上 `Retry-After` header。
+
+**為什麼用 action filter 而非 middleware？**
+
+- 限流 key 依賴 request body（`user_id` / `campaign_id`），放 middleware 需要自己重讀 body 並手動 deserialize，容易與 MVC 的 JSON naming policy 脫鉤。
+- Action filter 在 model binding 完成後執行，可以直接拿到已驗證的 `CreateOrderRequest`，invalid JSON 和 validation 錯誤仍走 ASP.NET 預設的 400 流程。
+- 限流只服務一個 endpoint，不值得用全域 middleware。
 
 ## 併發測試
 
@@ -170,6 +190,24 @@ confirmed 訂單數：100
 ```
 
 庫存正好歸零，不超賣，不少賣。
+
+### 限流整合測試（無外部依賴）
+
+```bash
+cd dotnet
+dotnet test --filter "RateLimitFilterTests"
+```
+
+使用 `WebApplicationFactory` + `NSubstitute` mock 掉 Redis 和 DB，測試案例：
+
+| 測試 | 驗證點 |
+|------|--------|
+| `Post_SnakeCaseJson_Returns201` | snake_case JSON 正確 deserialize |
+| `Post_MalformedJson_Returns400` | malformed JSON 回 400，不是 500 |
+| `Post_InvalidGuidUserId_Returns400` | 非 GUID 的 user_id 回 400 |
+| `Post_SameUser_11thRequest_Returns429` | 同一 user 第 11 次回 429 + `Retry-After: 60` |
+| `Post_DifferentUsers_DoNotShareBucket` | 不同 user 的 bucket 互相獨立 |
+| `Post_DifferentCampaigns_DoNotShareBucket` | 不同 campaign 的 bucket 互相獨立 |
 
 ## 資料庫 Schema
 
