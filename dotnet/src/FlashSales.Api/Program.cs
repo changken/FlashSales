@@ -2,6 +2,9 @@ using System.Text.Json;
 using System.Text.Json.Serialization;
 using Dapper;
 using FlashSales.Api.Infrastructure;
+using FlashSales.Api.Middleware;
+using Prometheus;
+using StackExchange.Redis;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -24,6 +27,10 @@ var connectionString = Environment.GetEnvironmentVariable("DATABASE_URL")
     ?? builder.Configuration.GetConnectionString("DefaultConnection")
     ?? throw new InvalidOperationException("DATABASE_URL or ConnectionStrings:DefaultConnection is required");
 
+// Redis connection
+var redisConnection = Environment.GetEnvironmentVariable("REDIS_URL") ?? "localhost:6379";
+builder.Services.AddSingleton<IConnectionMultiplexer>(ConnectionMultiplexer.Connect(redisConnection));
+
 // Dapper: map snake_case DB columns to PascalCase properties
 DefaultTypeMap.MatchNamesWithUnderscores = true;
 
@@ -31,6 +38,13 @@ DefaultTypeMap.MatchNamesWithUnderscores = true;
 builder.Services.AddFlashSalesServices(connectionString);
 
 var app = builder.Build();
+
+// Prometheus metrics endpoint
+app.UseMetricServer();
+app.UseHttpMetrics();
+
+// Rate limiting middleware
+app.UseMiddleware<RateLimitMiddleware>();
 
 // Swagger UI
 app.UseSwagger();
@@ -42,4 +56,5 @@ var port = Environment.GetEnvironmentVariable("PORT") ?? "8080";
 app.Urls.Add($"http://0.0.0.0:{port}");
 
 app.Logger.LogInformation("Server starting on :{Port}  swagger: http://localhost:{Port}/swagger/index.html", port, port);
+app.Logger.LogInformation("Metrics available at http://localhost:{Port}/metrics", port);
 app.Run();

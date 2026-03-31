@@ -1,5 +1,6 @@
 using FlashSales.Api.Dtos;
 using FlashSales.Api.Infrastructure;
+using FlashSales.Api.Middleware;
 using FlashSales.Api.Services;
 using Microsoft.AspNetCore.Mvc;
 
@@ -16,6 +17,8 @@ public class OrdersController : ControllerBase
     [HttpPost]
     public async Task<IActionResult> Create([FromBody] CreateOrderRequest req, CancellationToken ct)
     {
+        using var timer = MetricsRegistry.OrderDuration.NewTimer();
+
         if (!Guid.TryParse(req.CampaignId, out var campaignId))
             return BadRequest(new { error = "invalid campaign_id" });
 
@@ -25,6 +28,7 @@ public class OrdersController : ControllerBase
         try
         {
             var order = await _svc.CreateOrderAsync(campaignId, userId, req.Qty, req.IdempotencyKey, ct);
+            MetricsRegistry.OrderRequestsTotal.WithLabels("success").Inc();
             return CreatedAtAction(nameof(Create), new { id = order.Id }, new CreateOrderResponse
             {
                 OrderId = order.Id.ToString(),
@@ -37,6 +41,7 @@ public class OrdersController : ControllerBase
         }
         catch (OutOfStockException)
         {
+            MetricsRegistry.OrderRequestsTotal.WithLabels("out_of_stock").Inc();
             return Conflict(new ErrorResponse
             {
                 ErrorCode = "OUT_OF_STOCK",
@@ -45,6 +50,7 @@ public class OrdersController : ControllerBase
         }
         catch (Exception)
         {
+            MetricsRegistry.OrderRequestsTotal.WithLabels("error").Inc();
             return StatusCode(500, new ErrorResponse { Message = "internal server error" });
         }
     }

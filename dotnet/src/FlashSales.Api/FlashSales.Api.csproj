@@ -10,6 +10,8 @@
     <PackageReference Include="Dapper" Version="2.1.72" />
     <PackageReference Include="Npgsql" Version="10.0.2" />
     <PackageReference Include="Swashbuckle.AspNetCore" Version="10.1.7" />
+    <PackageReference Include="prometheus-net.AspNetCore" Version="9.0.0" />
+    <PackageReference Include="StackExchange.Redis" Version="2.8.16" />
   </ItemGroup>
 
 </Project>
